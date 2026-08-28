@@ -8,7 +8,9 @@ This follows the same view/view-model/service separation used by LyricsApp. Spot
 
 ## Progress — August 28, 2026
 
-The connection and manually refreshed now-playing milestone is implemented. Automated verification passes: 32 SpotifyKit tests, seven app view-model tests, and a signed macOS app build. The built app was also checked for Client ID configuration and sandbox network permissions.
+The connection and manually refreshed now-playing milestone is implemented. Automated verification passes: 42 SpotifyKit tests, seven app view-model tests, and a signed macOS app build. The built app was also checked for Client ID configuration and sandbox network permissions.
+
+Browser sign-in is now a reusable package feature. The app supplies its own Client ID once; users click Connect Spotify and approve access in the browser, with no developer credentials to obtain or paste. `SpotifyAuthorizationCoordinator` owns the attempt and cleanup; browser opening is injectable through `SpotifyBrowserOpening`. See `Packages/SpotifyKit/README.md` for integration examples.
 
 Live Spotify authorization, real Keychain persistence, and playback against an actual account have not been verified. The owner must complete the dashboard and Client ID setup in README, then run the live checks below. Checked implementation milestones do not imply those account-dependent checks are complete.
 
@@ -69,7 +71,7 @@ User action
 
 ### SwiftUI app
 
-The app target owns presentation and macOS integration:
+The app target owns presentation and service composition:
 
 - `ContentView`
   - Renders connection state, currently playing track, lyrics, loading, empty, and error states.
@@ -100,7 +102,8 @@ The app target owns presentation and macOS integration:
 - Playback snapshot and track metadata value types
 - HTTP and Spotify error mapping
 - `401`, `403`, `429`, cancellation, and retry behavior
-- Short-lived loopback callback handling; the app-owned authorization coordinator opens the browser
+- Short-lived loopback callback handling and the public `SpotifyAuthorizationCoordinator` sign-in process
+- An injectable browser boundary and default macOS browser opener
 
 Mutable services will own their isolation, normally through actors. Values crossing isolation boundaries will be small and `Sendable`.
 
@@ -154,6 +157,8 @@ References:
 - [x] Add checked-in setup instructions.
 - [x] Fail at startup with a useful configuration message when the Client ID is absent.
 - [x] Never request, store, or embed the Client Secret.
+- [x] Keep developer setup separate from end-user sign-in; users authorize through the app's Client ID.
+- [x] Provide browser sign-in as public SpotifyKit API with a package integration guide.
 
 The Client ID is public OAuth configuration, but keeping the developer-specific value outside the repository makes setup and ownership clearer.
 
@@ -332,6 +337,7 @@ Track identity, playback state, and lyrics state may change independently. The f
 - [x] Episode, advertisement, unknown, null item, and empty-response behavior
 - [x] `401`, `403`, `429`, malformed data, and network failure
 - [x] Cancellation, concurrent refresh ordering, and single-retry limits
+- [x] Package sign-in success, denial, malformed/state-mismatched callbacks, timeout, browser/token errors, cancellation, duplicate attempts, and fresh-state retry
 - [ ] Playback-position estimation for playing, paused, clamped, and re-anchored snapshots
 
 ### Lyrics integration tests
@@ -358,6 +364,8 @@ Track identity, playback state, and lyrics state may change independently. The f
 - macOS-only application for the first version
 - Swift 6 with complete strict concurrency
 - Authorization Code with PKCE; no embedded Client Secret
+- One developer-configured application Client ID; end users only approve browser sign-in
+- Browser sign-in lives in SpotifyKit with an injectable browser opener
 - Explicit `127.0.0.1` loopback callback
 - Minimum initial scope: `user-read-currently-playing`
 - Spotify read-only behavior; no playback controls in the first version

@@ -16,15 +16,8 @@ struct SpotifyHelperAppApp: App {
         let viewModel: SpotifyLyricsViewModel
         do {
             let configuration = try SpotifyAppConfiguration.load()
-            let session = SpotifySession(
-                configuration: configuration,
-                tokenStore: KeychainSpotifyTokenStore(account: configuration.clientID)
-            )
-            let authorization = SpotifyAuthorization(configuration: configuration)
-            let authorizationCoordinator = SpotifyAuthorizationCoordinator(
-                authorization: authorization,
-                session: session
-            )
+            let session = SpotifySession(configuration: configuration)
+            let authorizationCoordinator = SpotifyAuthorizationCoordinator(session: session)
             viewModel = SpotifyLyricsViewModel(
                 session: session,
                 authorizationCoordinator: authorizationCoordinator

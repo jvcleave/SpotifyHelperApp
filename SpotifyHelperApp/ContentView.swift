@@ -19,7 +19,7 @@ struct ContentView: View {
                 case .notConfigured(let message):
                     StatusView(
                         symbol: "gear.badge.xmark",
-                        title: "Spotify Setup Required",
+                        title: "Spotify Sign-In Unavailable",
                         message: message,
                         actionTitle: nil,
                         action: nil

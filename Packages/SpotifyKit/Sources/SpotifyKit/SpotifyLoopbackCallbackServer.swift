@@ -2,7 +2,7 @@ import Foundation
 import Network
 
 /// One authorization attempt. The server owns its listener, connections, and timeout.
-public actor SpotifyLoopbackCallbackServer {
+public actor SpotifyLoopbackCallbackServer: SpotifyAuthorizationCallbackReceiving {
     private let callbackPath: String
     private let timeout: Duration
     private let queue = DispatchQueue(label: "com.jvclabs.SpotifyHelperApp.oauth-callback")

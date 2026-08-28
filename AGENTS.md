@@ -47,6 +47,7 @@ User action
 ### SpotifyKit services and models
 
 - Keep OAuth construction, PKCE, token exchange/refresh, Keychain access, networking, decoding, pacing, and service errors in `SpotifyKit`.
+- Reuse `SpotifyAuthorizationCoordinator` for browser sign-in. Browser opening is isolated behind `SpotifyBrowserOpening`; the default macOS adapter may import AppKit, but the package must not import SwiftUI. Do not rebuild this flow in the app.
 - Do not import SwiftUI or retain app view models in `SpotifyKit`.
 - Cross concurrency boundaries with small `Sendable` requests, results, snapshots, events, and IDs.
 - Every mutable service owns its isolation. Prefer an actor for naturally serialized asynchronous state.
@@ -57,6 +58,7 @@ User action
 ### Dependencies and ownership
 
 - Construct long-lived services at the app composition root and inject them into the view model.
+- Configure the application's Client ID once at the composition root. End users sign in through Spotify's browser authorization page; do not make them obtain or paste developer credentials.
 - Keep default dependencies convenient for the app while preserving injectable boundaries for tests and previews.
 - The code that creates a listener, connection, task, or token owns its cleanup. Cleanup must be explicit and safe to repeat.
 - `SpotifyKit` and the future shared `LyricsKit` dependency remain independent; the app composes them.

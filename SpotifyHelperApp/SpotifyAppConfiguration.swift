@@ -10,7 +10,7 @@ struct SpotifyAppConfiguration {
 
         if clientID.isEmpty || clientID == "$(SPOTIFY_CLIENT_ID)" {
             throw SpotifyError.invalidConfiguration(
-                "Create Configuration/Spotify.local.xcconfig with SPOTIFY_CLIENT_ID set to your Client ID, then rebuild. See README for Spotify dashboard setup."
+                "This build is missing its Spotify Client ID. The app developer needs to configure Spotify before sign-in is available."
             )
         }
 

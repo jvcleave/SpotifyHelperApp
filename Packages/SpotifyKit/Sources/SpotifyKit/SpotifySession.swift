@@ -36,7 +36,7 @@ public actor SpotifySession {
         let error: APIError
     }
 
-    private let configuration: SpotifyConfiguration
+    nonisolated let configuration: SpotifyConfiguration
     private let transport: any SpotifyHTTPTransport
     private let tokenStore: any SpotifyTokenStoring
     private let now: @Sendable () -> Date
@@ -50,12 +50,12 @@ public actor SpotifySession {
     public init(
         configuration: SpotifyConfiguration,
         transport: any SpotifyHTTPTransport = URLSessionSpotifyHTTPTransport(),
-        tokenStore: any SpotifyTokenStoring = KeychainSpotifyTokenStore(),
+        tokenStore: (any SpotifyTokenStoring)? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.configuration = configuration
         self.transport = transport
-        self.tokenStore = tokenStore
+        self.tokenStore = tokenStore ?? KeychainSpotifyTokenStore(account: configuration.clientID)
         self.now = now
     }
 

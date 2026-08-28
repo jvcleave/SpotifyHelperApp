@@ -10,7 +10,6 @@
 		A30000013041576C007E543F /* SpotifyKit in Frameworks */ = {isa = PBXBuildFile; productRef = A30000043041576C007E543F /* SpotifyKit */; };
 		B40000010000000000000001 /* SpotifyKit in Frameworks */ = {isa = PBXBuildFile; productRef = A30000043041576C007E543F /* SpotifyKit */; };
 		B40000010000000000000002 /* SpotifyHelperApp/SpotifyLyricsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000020000000000000002 /* SpotifyHelperApp/SpotifyLyricsViewModel.swift */; };
-		B40000010000000000000003 /* SpotifyHelperApp/SpotifyAuthorizationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000020000000000000003 /* SpotifyHelperApp/SpotifyAuthorizationCoordinator.swift */; };
 		B40000010000000000000004 /* SpotifyHelperApp/SpotifyAppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000020000000000000004 /* SpotifyHelperApp/SpotifyAppConfiguration.swift */; };
 /* End PBXBuildFile section */
 
@@ -19,7 +18,6 @@
 		A30000053041576C007E543F /* Configuration/Spotify.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Configuration/Spotify.xcconfig; sourceTree = "<group>"; };
 		B40000020000000000000001 /* SpotifyHelperAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = SpotifyHelperAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B40000020000000000000002 /* SpotifyHelperApp/SpotifyLyricsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyHelperApp/SpotifyLyricsViewModel.swift; sourceTree = SOURCE_ROOT; };
-		B40000020000000000000003 /* SpotifyHelperApp/SpotifyAuthorizationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyHelperApp/SpotifyAuthorizationCoordinator.swift; sourceTree = SOURCE_ROOT; };
 		B40000020000000000000004 /* SpotifyHelperApp/SpotifyAppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyHelperApp/SpotifyAppConfiguration.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -80,7 +78,6 @@
 			isa = PBXGroup;
 			children = (
 				B40000020000000000000002 /* SpotifyHelperApp/SpotifyLyricsViewModel.swift */,
-				B40000020000000000000003 /* SpotifyHelperApp/SpotifyAuthorizationCoordinator.swift */,
 				B40000020000000000000004 /* SpotifyHelperApp/SpotifyAppConfiguration.swift */,
 			);
 			name = "Shared test sources";
@@ -195,7 +192,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				B40000010000000000000002 /* SpotifyHelperApp/SpotifyLyricsViewModel.swift in Sources */,
-				B40000010000000000000003 /* SpotifyHelperApp/SpotifyAuthorizationCoordinator.swift in Sources */,
 				B40000010000000000000004 /* SpotifyHelperApp/SpotifyAppConfiguration.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
