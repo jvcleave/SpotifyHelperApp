@@ -1,27 +1,40 @@
 import Foundation
 import Network
 
+/// One authorization attempt. The server owns its listener, connections, and timeout.
 public actor SpotifyLoopbackCallbackServer {
     private let callbackPath: String
+    private let timeout: Duration
     private let queue = DispatchQueue(label: "com.jvclabs.SpotifyHelperApp.oauth-callback")
     private var listener: NWListener?
+    private var started = false
+    private var finished = false
+    private var port: UInt16?
+    private var connections: [UUID: NWConnection] = [:]
+    private var requestBuffers: [UUID: Data] = [:]
+    private var timeoutTask: Task<Void, Never>?
     private var startContinuation: CheckedContinuation<URL, any Error>?
     private var callbackContinuation: CheckedContinuation<URL, any Error>?
     private var callbackResult: Result<URL, any Error>?
 
-    public init(callbackPath: String = "/callback") {
+    public init(
+        callbackPath: String = "/callback",
+        timeout: Duration = .seconds(120)
+    ) {
         self.callbackPath = callbackPath
+        self.timeout = timeout
     }
 
     public func start() async throws -> URL {
-        if listener != nil {
-            throw SpotifyError.invalidConfiguration("A Spotify authorization request is already active.")
+        try Task.checkCancellation()
+        if started || finished {
+            throw SpotifyError.invalidConfiguration("Create a new callback server for each authorization attempt.")
         }
+        started = true
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 startContinuation = continuation
-
                 do {
                     let parameters = NWParameters.tcp
                     parameters.requiredLocalEndpoint = .hostPort(
@@ -33,51 +46,38 @@ public actor SpotifyLoopbackCallbackServer {
                         on: .any
                     )
                     self.listener = listener
-
                     listener.stateUpdateHandler = { [weak self, weak listener] state in
-                        switch state {
-                        case .ready:
-                            let port = listener?.port?.rawValue
-                            Task {
-                                await self?.listenerReady(port: port)
-                            }
-                        case .failed(let error):
-                            let message = error.localizedDescription
-                            Task {
-                                await self?.listenerFailed(message: message)
-                            }
-                        case .cancelled:
-                            Task {
-                                await self?.listenerCancelled()
-                            }
-                        case .setup, .waiting:
-                            break
-                        @unknown default:
-                            break
+                        let boundPort = listener?.port?.rawValue
+                        Task {
+                            await self?.listenerStateChanged(
+                                state: state,
+                                boundPort: boundPort
+                            )
                         }
                     }
-
-                    listener.newConnectionHandler = { [weak self, weak listener] connection in
-                        if let callbackServer = self {
-                            let port = listener?.port?.rawValue
-                            Self.receiveHTTPRequest(
-                                connection: connection,
-                                callbackPath: callbackServer.callbackPath,
-                                port: port,
-                                queue: callbackServer.queue
-                            ) { [callbackServer] result in
-                                Task {
-                                    await callbackServer.receiveCallback(result: result)
-                                }
+                    listener.newConnectionHandler = { [weak self] connection in
+                        Task {
+                            if let self {
+                                await self.acceptConnection(connection)
+                            } else {
+                                connection.cancel()
                             }
-                        } else {
-                            connection.cancel()
                         }
                     }
                     listener.start(queue: queue)
+                    let timeout = self.timeout
+                    timeoutTask = Task { [weak self] in
+                        do {
+                            try await Task.sleep(for: timeout)
+                            await self?.finish(.failure(
+                                SpotifyError.network("Spotify authorization timed out. Please try connecting again.")
+                            ))
+                        } catch {
+                            // Cleanup cancels the deadline after this attempt finishes.
+                        }
+                    }
                 } catch {
-                    startContinuation = nil
-                    continuation.resume(throwing: error)
+                    finish(.failure(error))
                 }
             }
         } onCancel: {
@@ -88,11 +88,16 @@ public actor SpotifyLoopbackCallbackServer {
     }
 
     public func waitForCallback() async throws -> URL {
+        if Task.isCancelled {
+            stop()
+            throw CancellationError()
+        }
         if let callbackResult {
-            self.callbackResult = nil
             return try callbackResult.get()
         }
-
+        if !started || callbackContinuation != nil {
+            throw SpotifyError.invalidConfiguration("The callback server requires one active authorization attempt.")
+        }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 callbackContinuation = continuation
@@ -105,156 +110,217 @@ public actor SpotifyLoopbackCallbackServer {
     }
 
     public func stop() {
-        let cancellationError = CancellationError()
-        if let startContinuation {
-            self.startContinuation = nil
-            startContinuation.resume(throwing: cancellationError)
-        }
-        if let callbackContinuation {
-            self.callbackContinuation = nil
-            callbackContinuation.resume(throwing: cancellationError)
-        }
-        listener?.stateUpdateHandler = nil
-        listener?.newConnectionHandler = nil
-        listener?.cancel()
-        listener = nil
-        callbackResult = nil
+        finish(.failure(CancellationError()))
     }
 
     var isRunning: Bool {
         listener != nil
     }
 
-    private func listenerReady(port: UInt16?) {
-        if let port, let continuation = startContinuation {
-            var components = URLComponents()
+    private func listenerStateChanged(
+        state: NWListener.State,
+        boundPort: UInt16?
+    ) {
+        if finished {
+            return
+        }
+        switch state {
+        case .ready:
+            if let boundPort, let continuation = startContinuation {
+                port = boundPort
+                var components = URLComponents()
+                components.scheme = "http"
+                components.host = "127.0.0.1"
+                components.port = Int(boundPort)
+                components.path = callbackPath
+                if let redirectURI = components.url {
+                    startContinuation = nil
+                    continuation.resume(returning: redirectURI)
+                    return
+                }
+            }
+            finish(.failure(SpotifyError.invalidAuthorizationCallback))
+        case .failed:
+            finish(.failure(SpotifyError.network("The local Spotify callback listener could not start.")))
+        case .cancelled:
+            finish(.failure(CancellationError()))
+        case .setup, .waiting:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    private func acceptConnection(_ connection: NWConnection) {
+        if finished || connections.count >= 4 {
+            connection.cancel()
+            return
+        }
+        let connectionID = UUID()
+        connections[connectionID] = connection
+        requestBuffers[connectionID] = Data()
+        connection.start(queue: queue)
+        receiveRequest(connectionID: connectionID)
+    }
+
+    private func receiveRequest(connectionID: UUID) {
+        if let connection = connections[connectionID] {
+            connection.receive(
+                minimumIncompleteLength: 1,
+                maximumLength: 16_384
+            ) { [weak self] data, _, isComplete, error in
+                Task {
+                    await self?.receivedBytes(
+                        connectionID: connectionID,
+                        data: data,
+                        ended: isComplete || error != nil
+                    )
+                }
+            }
+        }
+    }
+
+    private func receivedBytes(
+        connectionID: UUID,
+        data: Data?,
+        ended: Bool
+    ) {
+        if finished || connections[connectionID] == nil {
+            return
+        }
+        if let data {
+            requestBuffers[connectionID, default: Data()].append(data)
+        }
+        let buffer = requestBuffers[connectionID] ?? Data()
+        if buffer.count > 16_384 {
+            respond(
+                connectionID: connectionID,
+                status: "431 Request Header Fields Too Large",
+                callbackURL: nil
+            )
+            return
+        }
+        if buffer.range(of: Data("\r\n\r\n".utf8)) == nil {
+            if ended {
+                connections.removeValue(forKey: connectionID)?.cancel()
+                requestBuffers.removeValue(forKey: connectionID)
+            } else {
+                receiveRequest(connectionID: connectionID)
+            }
+            return
+        }
+
+        let requestText = String(
+            decoding: buffer,
+            as: UTF8.self
+        )
+        let requestLine = requestText.components(separatedBy: "\r\n")[0]
+        let requestParts = requestLine.split(separator: " ")
+        if requestParts.count == 3,
+           requestParts[0] == "GET",
+           requestParts[1].hasPrefix("/"),
+           let port,
+           var components = URLComponents(string: String(requestParts[1])),
+           components.path == callbackPath,
+           components.host == nil,
+           components.fragment == nil {
             components.scheme = "http"
             components.host = "127.0.0.1"
             components.port = Int(port)
-            components.path = callbackPath
-            if let redirectURI = components.url {
-                startContinuation = nil
-                continuation.resume(returning: redirectURI)
+            if let callbackURL = components.url {
+                respond(
+                    connectionID: connectionID,
+                    status: "200 OK",
+                    callbackURL: callbackURL
+                )
                 return
             }
         }
-        listenerFailed(message: "The Spotify authorization callback address could not be created.")
+        // Browser favicon requests must not abort the authorization attempt.
+        respond(
+            connectionID: connectionID,
+            status: "404 Not Found",
+            callbackURL: nil
+        )
     }
 
-    private func listenerFailed(message: String) {
-        let error = SpotifyError.network(message)
-        if let startContinuation {
-            self.startContinuation = nil
-            startContinuation.resume(throwing: error)
-        }
-        if let callbackContinuation {
-            self.callbackContinuation = nil
-            callbackContinuation.resume(throwing: error)
-        } else {
-            callbackResult = .failure(error)
-        }
-        listener?.stateUpdateHandler = nil
-        listener?.newConnectionHandler = nil
-        listener?.cancel()
-        listener = nil
-    }
-
-    private func listenerCancelled() {
-        if listener != nil {
-            listenerFailed(message: "Spotify authorization was cancelled.")
-        }
-    }
-
-    private func receiveCallback(result: Result<URL, SpotifyError>) {
-        if let callbackContinuation {
-            self.callbackContinuation = nil
-            callbackContinuation.resume(with: result.mapError { $0 as any Error })
-        } else {
-            callbackResult = result.mapError { $0 as any Error }
-        }
-
-        listener?.stateUpdateHandler = nil
-        listener?.newConnectionHandler = nil
-        listener?.cancel()
-        listener = nil
-    }
-
-    private nonisolated static func receiveHTTPRequest(
-        connection: NWConnection,
-        callbackPath: String,
-        port: UInt16?,
-        queue: DispatchQueue,
-        completion: @escaping @Sendable (Result<URL, SpotifyError>) -> Void
+    private func respond(
+        connectionID: UUID,
+        status: String,
+        callbackURL: URL?
     ) {
-        connection.start(queue: queue)
-        connection.receive(
-            minimumIncompleteLength: 1,
-            maximumLength: 16_384
-        ) { data, _, _, error in
-            let result: Result<URL, SpotifyError>
-            let responseStatus: String
-            let responseBody: String
-
-            if let error {
-                result = .failure(.network(error.localizedDescription))
-                responseStatus = "400 Bad Request"
-                responseBody = "Spotify authorization could not be completed."
-            } else if let data,
-                      let requestText = String(data: data, encoding: .utf8),
-                      let requestLine = requestText.components(separatedBy: "\r\n").first {
-                let requestParts = requestLine.split(separator: " ")
-                if requestParts.count >= 2,
-                   requestParts[0] == "GET",
-                   let port {
-                    let requestTarget = String(requestParts[1])
-                    var targetComponents = URLComponents(string: requestTarget)
-                    if targetComponents?.path == callbackPath {
-                        targetComponents?.scheme = "http"
-                        targetComponents?.host = "127.0.0.1"
-                        targetComponents?.port = Int(port)
-                        if let callbackURL = targetComponents?.url {
-                            result = .success(callbackURL)
-                            responseStatus = "200 OK"
-                            responseBody = "Spotify is connected. You can return to SpotifyHelperApp."
-                        } else {
-                            result = .failure(.invalidAuthorizationCallback)
-                            responseStatus = "400 Bad Request"
-                            responseBody = "Spotify authorization returned an invalid callback."
-                        }
-                    } else {
-                        result = .failure(.invalidAuthorizationCallback)
-                        responseStatus = "404 Not Found"
-                        responseBody = "This callback path is not recognized."
-                    }
-                } else {
-                    result = .failure(.invalidAuthorizationCallback)
-                    responseStatus = "400 Bad Request"
-                    responseBody = "Spotify authorization returned an invalid request."
-                }
-            } else {
-                result = .failure(.invalidAuthorizationCallback)
-                responseStatus = "400 Bad Request"
-                responseBody = "Spotify authorization returned an invalid request."
-            }
-
-            let bodyData = Data(responseBody.utf8)
-            let headers = """
-            HTTP/1.1 \(responseStatus)\r
-            Content-Type: text/plain; charset=utf-8\r
-            Content-Length: \(bodyData.count)\r
-            Connection: close\r
-            \r
-            """
+        if let connection = connections[connectionID] {
+            let message = callbackURL == nil
+                ? "This callback request is not recognized."
+                : "Spotify response received. Return to SpotifyHelperApp to finish connecting."
+            let bodyData = Data(message.utf8)
+            let headers = [
+                "HTTP/1.1 \(status)",
+                "Content-Type: text/plain; charset=utf-8",
+                "Content-Length: \(bodyData.count)",
+                "Cache-Control: no-store",
+                "Connection: close",
+                "",
+                ""
+            ].joined(separator: "\r\n")
             var responseData = Data(headers.utf8)
             responseData.append(bodyData)
             connection.send(
                 content: responseData,
                 contentContext: .finalMessage,
                 isComplete: true,
-                completion: .contentProcessed { _ in
-                    completion(result)
+                completion: .contentProcessed { [weak self] _ in
+                    Task {
+                        await self?.responseSent(
+                            connectionID: connectionID,
+                            callbackURL: callbackURL
+                        )
+                    }
                 }
             )
         }
+    }
+
+    private func responseSent(
+        connectionID: UUID,
+        callbackURL: URL?
+    ) {
+        connections.removeValue(forKey: connectionID)?.cancel()
+        requestBuffers.removeValue(forKey: connectionID)
+        if let callbackURL {
+            finish(.success(callbackURL))
+        }
+    }
+
+    private func finish(_ result: Result<URL, any Error>) {
+        if finished {
+            return
+        }
+        finished = true
+        callbackResult = result
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        if let startContinuation {
+            self.startContinuation = nil
+            switch result {
+            case .failure(let error):
+                startContinuation.resume(throwing: error)
+            case .success:
+                startContinuation.resume(throwing: SpotifyError.invalidAuthorizationCallback)
+            }
+        }
+        if let callbackContinuation {
+            self.callbackContinuation = nil
+            callbackContinuation.resume(with: result)
+        }
+        listener?.stateUpdateHandler = nil
+        listener?.newConnectionHandler = nil
+        listener?.cancel()
+        listener = nil
+        for connection in connections.values {
+            connection.cancel()
+        }
+        connections.removeAll()
+        requestBuffers.removeAll()
     }
 }

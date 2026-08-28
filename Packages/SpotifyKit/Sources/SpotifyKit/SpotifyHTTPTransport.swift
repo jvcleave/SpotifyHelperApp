@@ -30,7 +30,7 @@ public protocol SpotifyHTTPTransport: Sendable {
 public struct URLSessionSpotifyHTTPTransport: SpotifyHTTPTransport {
     private let session: URLSession
 
-    public init(session: URLSession = .shared) {
+    public init(session: URLSession = URLSession(configuration: .ephemeral)) {
         self.session = session
     }
 
@@ -50,4 +50,3 @@ public struct URLSessionSpotifyHTTPTransport: SpotifyHTTPTransport {
         throw SpotifyError.invalidResponse
     }
 }
-

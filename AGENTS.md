@@ -83,13 +83,14 @@ Add focused tests beside the package behavior they protect. From the repository 
 swift test --package-path Packages/SpotifyKit
 ```
 
-For app or integration changes, also build the macOS scheme:
+For app or integration changes, also run the app view-model tests and build the macOS scheme:
 
 ```sh
+xcodebuild -project SpotifyHelperApp.xcodeproj -scheme SpotifyHelperApp -destination 'platform=macOS' test
 xcodebuild -project SpotifyHelperApp.xcodeproj -scheme SpotifyHelperApp -destination 'platform=macOS' build
 ```
 
-Use injected HTTP and token-store boundaries. Tests must not contact Spotify, open a browser, or mutate the user's real Keychain.
+Use injected HTTP and token-store boundaries. Tests must not contact Spotify, open a browser, or mutate the user's real Keychain. The hostless app test target compiles the view model and its dependencies directly so testing never launches the production composition root.
 
 ## Before handing off Swift changes
 
@@ -100,4 +101,3 @@ Use injected HTTP and token-store boundaries. Tests must not contact Spotify, op
 - Confirm callback listeners and tasks clean up on success, failure, timeout, and cancellation.
 - Confirm token, empty-playback, cancellation, remote-error, and retry paths remain coherent.
 - Run the package tests and macOS app build, and report anything that could not be verified.
-

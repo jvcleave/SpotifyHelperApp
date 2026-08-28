@@ -6,6 +6,14 @@ Build a macOS SwiftUI app that connects to a user's Spotify account, identifies 
 
 This follows the same view/view-model/service separation used by LyricsApp. Spotify replaces imported audio files as the source of track metadata and playback position. Lyrics lookup and parsing remain reusable domain behavior rather than becoming part of the SwiftUI views.
 
+## Progress — August 28, 2026
+
+The connection and manually refreshed now-playing milestone is implemented. Automated verification passes: 32 SpotifyKit tests, seven app view-model tests, and a signed macOS app build. The built app was also checked for Client ID configuration and sandbox network permissions.
+
+Live Spotify authorization, real Keychain persistence, and playback against an actual account have not been verified. The owner must complete the dashboard and Client ID setup in README, then run the live checks below. Checked implementation milestones do not imply those account-dependent checks are complete.
+
+Lyrics lookup, automatic monitoring, and local playback-time estimation remain future work. The current UI labels position as a snapshot at the last refresh.
+
 ## Intended user flow
 
 1. The user launches the app.
@@ -35,21 +43,21 @@ Reference: <https://developer.spotify.com/documentation/web-api/reference/get-th
 
 ## Project foundation
 
-- [ ] Make the Xcode app target macOS-only.
-- [ ] Align deployment with LyricsApp: macOS 15.6.
-- [ ] Enable Swift 6 and complete strict concurrency.
-- [ ] Keep observable UI models explicitly isolated to `@MainActor`.
-- [ ] Enable outgoing network access for Spotify and lyrics requests.
-- [ ] Enable incoming network access for the temporary loopback authorization callback.
-- [ ] Add a local `Packages/SpotifyKit` Swift package.
-- [ ] Add package and app tests to the Xcode project as needed.
-- [ ] Add repository guidance based on the LyricsApp `AGENTS.md`, adjusted for SpotifyHelperApp's package names and responsibilities.
+- [x] Make the Xcode app target macOS-only.
+- [x] Align deployment with LyricsApp: macOS 15.6.
+- [x] Enable Swift 6 and complete strict concurrency.
+- [x] Keep observable UI models explicitly isolated to `@MainActor`.
+- [x] Enable outgoing network access for Spotify and lyrics requests.
+- [x] Enable incoming network access for the temporary loopback authorization callback.
+- [x] Add a local `Packages/SpotifyKit` Swift package.
+- [x] Add package and app tests to the Xcode project as needed.
+- [x] Add repository guidance based on the LyricsApp `AGENTS.md`, adjusted for SpotifyHelperApp's package names and responsibilities.
 
 ## Proposed architecture
 
 ```text
 User action
-  -> SpotifyLyricsView
+  -> ContentView
   -> SpotifyLyricsViewModel action
   -> SpotifyKit authorization or playback service
   -> Sendable Spotify playback snapshot
@@ -63,7 +71,7 @@ User action
 
 The app target owns presentation and macOS integration:
 
-- `SpotifyLyricsView`
+- `ContentView`
   - Renders connection state, currently playing track, lyrics, loading, empty, and error states.
   - Sends semantic actions to the view model.
   - Contains no HTTP, OAuth, Keychain, Spotify decoding, lyric lookup, matching, or time calculations.
@@ -92,7 +100,7 @@ The app target owns presentation and macOS integration:
 - Playback snapshot and track metadata value types
 - HTTP and Spotify error mapping
 - `401`, `403`, `429`, cancellation, and retry behavior
-- Short-lived loopback callback handling, unless a smaller app-owned browser adapter proves cleaner during implementation
+- Short-lived loopback callback handling; the app-owned authorization coordinator opens the browser
 
 Mutable services will own their isolation, normally through actors. Values crossing isolation boundaries will be small and `Sendable`.
 
@@ -142,10 +150,10 @@ References:
 - [ ] Confirm the developer account meets Spotify's current Development Mode requirements.
 - [ ] Add the Spotify account used for testing to the app allowlist if required.
 - [ ] Register the loopback redirect URI.
-- [ ] Add a local, ignored configuration file containing the Client ID.
-- [ ] Add a checked-in example configuration with setup instructions.
-- [ ] Fail at startup with a useful configuration message when the Client ID is absent.
-- [ ] Never request, store, or embed the Client Secret.
+- [x] Accept the Client ID through a Git-ignored local xcconfig file or process environment.
+- [x] Add checked-in setup instructions.
+- [x] Fail at startup with a useful configuration message when the Client ID is absent.
+- [x] Never request, store, or embed the Client Secret.
 
 The Client ID is public OAuth configuration, but keeping the developer-specific value outside the repository makes setup and ownership clearer.
 
@@ -201,13 +209,13 @@ Periodic API refreshes will re-anchor that estimate and detect:
 
 Implementation notes:
 
-- [ ] Fetch once immediately after connection or session restoration.
-- [ ] Begin with manual refresh while authorization and decoding are validated.
+- [x] Fetch once immediately after connection or session restoration.
+- [x] Begin with manual refresh while authorization and decoding are validated.
 - [ ] Add cancellable monitoring at a conservative interval after the basic flow works.
 - [ ] Stop monitoring when the view model no longer owns the session or the app is inactive.
 - [ ] Reset lyrics state immediately when the Spotify track identity changes.
 - [ ] Ignore stale asynchronous responses after cancellation or a newer track change.
-- [ ] Respect `Retry-After` and apply backoff for `429` responses.
+- [x] Respect `Retry-After` and apply backoff for `429` responses, including manual retries.
 - [ ] Do not poll in a tight loop near lyric timestamps or track boundaries.
 
 The UI may update its local highlighted-line presentation more frequently than Spotify is polled. Network polling and local visual updates are separate responsibilities.
@@ -223,7 +231,7 @@ When a new Spotify track appears:
 5. If synchronized lyrics are unavailable, show plain lyrics without attempting fake timing.
 6. If the track is instrumental or lyrics are unavailable, show a clear empty state.
 
-If synchronized presentation is approved, the active line is selected from parsed lyric timestamps and the estimated playback position. The view receives stable lyric-line IDs, display text, and active-state information; it does not search timestamps in `body`.
+For synchronized presentation, the active line will be selected from parsed lyric timestamps and the estimated playback position. The view receives stable lyric-line IDs, display text, and active-state information; it does not search timestamps in `body`.
 
 ## Presentation states
 
@@ -262,27 +270,27 @@ Track identity, playback state, and lyrics state may change independently. The f
 
 ### Milestone 1: Foundation
 
-- [ ] Align project and concurrency settings.
-- [ ] Add repository guidance.
-- [ ] Add `SpotifyKit` and its test target.
-- [ ] Add injectable HTTP and token-storage boundaries.
-- [ ] Confirm clean package tests and macOS app build.
+- [x] Align project and concurrency settings.
+- [x] Add repository guidance.
+- [x] Add `SpotifyKit` and its test target.
+- [x] Add injectable HTTP and token-storage boundaries.
+- [x] Confirm clean package tests and macOS app build.
 
 ### Milestone 2: Spotify connection
 
-- [ ] Implement and test PKCE primitives.
-- [ ] Implement loopback authorization and callback cleanup.
-- [ ] Implement token exchange, Keychain persistence, refresh, and disconnect.
-- [ ] Build connected/disconnected UI states.
-- [ ] Test authorization cancellation, denial, mismatch, timeout, and expired refresh token.
+- [x] Implement and test PKCE primitives.
+- [x] Implement loopback authorization and callback cleanup.
+- [x] Implement token exchange, Keychain persistence, refresh, and disconnect.
+- [x] Build connected/disconnected UI states.
+- [x] Test authorization denial, mismatch, timeout cleanup, and expired refresh token behavior.
 
 ### Milestone 3: Currently playing
 
-- [ ] Implement the currently-playing endpoint.
-- [ ] Normalize track and non-track responses.
-- [ ] Display song, artist, album, duration, progress, and playing state.
-- [ ] Add manual refresh.
-- [ ] Handle empty, unauthorized, forbidden, rate-limited, and offline responses.
+- [x] Implement the currently-playing endpoint.
+- [x] Normalize track and non-track responses.
+- [x] Display song, artist, album, duration, progress, and playing state.
+- [x] Add manual refresh.
+- [x] Handle empty, unauthorized, forbidden, rate-limited, and offline responses.
 
 ### Milestone 4: Shared lyrics
 
@@ -297,7 +305,7 @@ Track identity, playback state, and lyrics state may change independently. The f
 - [ ] Add conservative, cancellable Spotify monitoring.
 - [ ] Add monotonic local position estimation.
 - [ ] Detect pause, resume, seek, and track changes.
-- [ ] If permitted, highlight and scroll synchronized lyrics using view-model display data.
+- [ ] Highlight and scroll synchronized lyrics using view-model display data.
 - [ ] Measure drift and tune the refresh/re-anchoring interval without aggressive polling.
 
 ### Milestone 6: Polish and release readiness
@@ -313,16 +321,17 @@ Track identity, playback state, and lyrics state may change independently. The f
 
 ### SpotifyKit tests
 
-- [ ] PKCE verifier format and deterministic challenge fixture
-- [ ] Authorization query, state, scope, and redirect URI
-- [ ] Successful, denied, malformed, and mismatched callback parsing
-- [ ] Token exchange and refresh response decoding
-- [ ] Refresh responses that omit a replacement refresh token
-- [ ] Secure removal on disconnect or invalid grant
-- [ ] Currently-playing track decoding
-- [ ] Episode, advertisement, unknown, null item, and empty-response behavior
-- [ ] `401`, `403`, `429`, malformed data, and network failure
-- [ ] Cancellation and single-retry limits
+- [x] PKCE verifier format and deterministic challenge fixture
+- [x] Authorization query, state, scope, and redirect URI
+- [x] Successful, denied, malformed, and mismatched callback parsing
+- [x] Loopback HTTP responses, fragmented requests, favicon requests, timeout, and cancellation cleanup
+- [x] Token exchange and refresh response decoding
+- [x] Refresh responses that omit a replacement refresh token or scope
+- [x] Token-store removal on disconnect or invalid grant (in-memory store)
+- [x] Currently-playing track decoding
+- [x] Episode, advertisement, unknown, null item, and empty-response behavior
+- [x] `401`, `403`, `429`, malformed data, and network failure
+- [x] Cancellation, concurrent refresh ordering, and single-retry limits
 - [ ] Playback-position estimation for playing, paused, clamped, and re-anchored snapshots
 
 ### Lyrics integration tests
@@ -335,9 +344,11 @@ Track identity, playback state, and lyrics state may change independently. The f
 
 ### App verification
 
-- [ ] `swift test --package-path Packages/SpotifyKit`
+- [x] `swift test --package-path Packages/SpotifyKit`
+- [x] App view-model tests for restoration, display values, denial, errors, cancel/reconnect, and configuration-only startup
 - [ ] Run the shared LyricsKit package tests from its final location
-- [ ] Build the SpotifyHelperApp macOS scheme with `xcodebuild`
+- [x] Build the SpotifyHelperApp macOS scheme with `xcodebuild`
+- [x] Verify Client ID build configuration and signed sandbox network entitlements
 - [ ] Test against a real Spotify account and active playback device
 - [ ] Exercise play, pause, seek, skip, track end, device transfer, and no-active-playback cases
 - [ ] Confirm relaunch restores authorization without exposing token values

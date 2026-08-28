@@ -4,7 +4,7 @@ public actor SpotifySession {
     private struct TokenResponse: Decodable {
         let accessToken: String
         let tokenType: String
-        let scope: String
+        let scope: String?
         let expiresIn: Int
         let refreshToken: String?
 
@@ -42,6 +42,10 @@ public actor SpotifySession {
     private let now: @Sendable () -> Date
     private var cachedToken: SpotifyToken?
     private var loadedStoredToken = false
+    private var operationInProgress = false
+    private var operationWaiters: [CheckedContinuation<Void, Never>] = []
+    private var retryNotBefore: Date?
+    private var rateLimitCount = 0
 
     public init(
         configuration: SpotifyConfiguration,
@@ -56,6 +60,9 @@ public actor SpotifySession {
     }
 
     public func restoreConnection() async throws -> Bool {
+        await beginOperation()
+        defer { endOperation() }
+        try Task.checkCancellation()
         try await loadStoredTokenIfNeeded()
         return cachedToken != nil
     }
@@ -65,6 +72,9 @@ public actor SpotifySession {
         codeVerifier: String,
         redirectURI: URL
     ) async throws {
+        await beginOperation()
+        defer { endOperation() }
+        try Task.checkCancellation()
         let bodyValues = [
             "grant_type": "authorization_code",
             "code": code,
@@ -78,7 +88,7 @@ public actor SpotifySession {
                 accessToken: response.accessToken,
                 refreshToken: refreshToken,
                 tokenType: response.tokenType,
-                scopes: Self.scopes(scope: response.scope),
+                scopes: response.scope.map(Self.scopes) ?? configuration.scopes,
                 expiresAt: now().addingTimeInterval(TimeInterval(response.expiresIn))
             )
             try await tokenStore.save(token)
@@ -90,12 +100,17 @@ public actor SpotifySession {
     }
 
     public func disconnect() async throws {
+        await beginOperation()
+        defer { endOperation() }
         cachedToken = nil
         loadedStoredToken = true
         try await tokenStore.delete()
     }
 
     public func currentlyPlaying() async throws -> SpotifyPlaybackContent {
+        await beginOperation()
+        defer { endOperation() }
+        try Task.checkCancellation()
         let accessToken = try await validAccessToken(forceRefresh: false)
         var response = try await sendCurrentlyPlaying(accessToken: accessToken)
         if response.statusCode == 401 {
@@ -112,20 +127,39 @@ public actor SpotifySession {
         case 204:
             return .nothingPlaying
         case 401:
+            cachedToken = nil
+            try await tokenStore.delete()
             throw SpotifyError.notConnected
         case 403:
             let message = apiErrorMessage(data: response.data)
                 ?? "Spotify did not allow access to the current playback state. Check the account allowlist and requested scope."
             throw SpotifyError.forbidden(message)
-        case 429:
-            let retryAfter = response.header(name: "Retry-After").flatMap(TimeInterval.init)
-            throw SpotifyError.rateLimited(retryAfter: retryAfter)
         default:
             let message = apiErrorMessage(data: response.data) ?? "Spotify could not load the current playback state."
             throw SpotifyError.server(
                 statusCode: response.statusCode,
                 message: message
             )
+        }
+    }
+
+    // An actor can re-enter at await points. Keep token refresh/save/delete ordered
+    // across those points so disconnect cannot be undone by a late token write.
+    private func beginOperation() async {
+        if operationInProgress {
+            await withCheckedContinuation { continuation in
+                operationWaiters.append(continuation)
+            }
+        } else {
+            operationInProgress = true
+        }
+    }
+
+    private func endOperation() {
+        if operationWaiters.isEmpty {
+            operationInProgress = false
+        } else {
+            operationWaiters.removeFirst().resume()
         }
     }
 
@@ -167,7 +201,7 @@ public actor SpotifySession {
                 accessToken: response.accessToken,
                 refreshToken: replacementRefreshToken,
                 tokenType: response.tokenType,
-                scopes: Self.scopes(scope: response.scope),
+                scopes: response.scope.map(Self.scopes) ?? token.scopes,
                 expiresAt: now().addingTimeInterval(TimeInterval(response.expiresIn))
             )
             try await tokenStore.save(refreshedToken)
@@ -176,7 +210,7 @@ public actor SpotifySession {
         } catch let spotifyError as SpotifyError {
             if case .notConnected = spotifyError {
                 cachedToken = nil
-                try? await tokenStore.delete()
+                try await tokenStore.delete()
             }
             throw spotifyError
         }
@@ -186,19 +220,32 @@ public actor SpotifySession {
         let tokenURL = URL(string: "https://accounts.spotify.com/api/token")!
         var request = URLRequest(url: tokenURL)
         request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue(
+            "application/x-www-form-urlencoded",
+            forHTTPHeaderField: "Content-Type"
+        )
         request.httpBody = Self.formEncodedData(values: bodyValues)
 
         let response = try await send(request)
         if response.statusCode == 200 {
             do {
-                return try JSONDecoder().decode(TokenResponse.self, from: response.data)
+                let token = try JSONDecoder().decode(
+                    TokenResponse.self,
+                    from: response.data
+                )
+                if token.accessToken.isEmpty || token.expiresIn <= 0 || token.tokenType.lowercased() != "bearer" {
+                    throw SpotifyError.invalidResponse
+                }
+                return token
             } catch {
                 throw SpotifyError.invalidResponse
             }
         }
 
-        let oauthError = try? JSONDecoder().decode(OAuthErrorResponse.self, from: response.data)
+        let oauthError = try? JSONDecoder().decode(
+            OAuthErrorResponse.self,
+            from: response.data
+        )
         if oauthError?.error == "invalid_grant" {
             throw SpotifyError.notConnected
         }
@@ -212,14 +259,60 @@ public actor SpotifySession {
     private func sendCurrentlyPlaying(accessToken: String) async throws -> SpotifyHTTPResponse {
         let endpoint = URL(string: "https://api.spotify.com/v1/me/player/currently-playing")!
         var request = URLRequest(url: endpoint)
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(
+            "Bearer \(accessToken)",
+            forHTTPHeaderField: "Authorization"
+        )
         return try await send(request)
     }
 
     private func send(_ request: URLRequest) async throws -> SpotifyHTTPResponse {
+        try Task.checkCancellation()
+        if let retryNotBefore, retryNotBefore > now() {
+            throw SpotifyError.rateLimited(retryAfter: retryNotBefore.timeIntervalSince(now()))
+        }
         do {
-            return try await transport.send(request)
+            var uncachedRequest = request
+            uncachedRequest.timeoutInterval = 30
+            uncachedRequest.cachePolicy = .reloadIgnoringLocalCacheData
+            let response = try await transport.send(uncachedRequest)
+            try Task.checkCancellation()
+            if response.statusCode == 429 {
+                rateLimitCount = min(
+                    rateLimitCount + 1,
+                    6
+                )
+                var delay = pow(
+                    2,
+                    Double(rateLimitCount)
+                )
+                if let header = response.header(name: "Retry-After") {
+                    if let seconds = TimeInterval(header), seconds.isFinite, seconds > 0 {
+                        delay = seconds
+                    } else {
+                        let formatter = DateFormatter()
+                        formatter.locale = Locale(identifier: "en_US_POSIX")
+                        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+                        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss z"
+                        if let retryDate = formatter.date(from: header) {
+                            delay = max(
+                                delay,
+                                retryDate.timeIntervalSince(now())
+                            )
+                        }
+                    }
+                }
+                retryNotBefore = now().addingTimeInterval(delay)
+                throw SpotifyError.rateLimited(retryAfter: delay)
+            }
+            if (200..<300).contains(response.statusCode) {
+                retryNotBefore = nil
+                rateLimitCount = 0
+            }
+            return response
         } catch is CancellationError {
+            throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
             throw CancellationError()
         } catch let spotifyError as SpotifyError {
             throw spotifyError
@@ -231,7 +324,10 @@ public actor SpotifySession {
     private func decodePlayback(data: Data) throws -> SpotifyPlaybackContent {
         let playback: SpotifyCurrentlyPlayingResponse
         do {
-            playback = try JSONDecoder().decode(SpotifyCurrentlyPlayingResponse.self, from: data)
+            playback = try JSONDecoder().decode(
+                SpotifyCurrentlyPlayingResponse.self,
+                from: data
+            )
         } catch {
             throw SpotifyError.invalidResponse
         }
@@ -240,15 +336,28 @@ public actor SpotifySession {
             let playbackType = playback.currentlyPlayingType ?? item.type ?? "unknown"
             if playbackType == "track" {
                 let identity = item.id ?? item.uri
-                if let identity {
-                    let duration = max(0, item.durationMilliseconds ?? 0)
-                    let progress = min(max(0, playback.progressMilliseconds ?? 0), duration)
+                if let identity, !identity.isEmpty,
+                   let title = item.name,
+                   let rawDuration = item.durationMilliseconds {
+                    let duration = max(
+                        0,
+                        rawDuration
+                    )
+                    let progress = playback.progressMilliseconds.map { milliseconds in
+                        min(
+                            max(
+                                0,
+                                milliseconds
+                            ),
+                            duration
+                        )
+                    }
                     let changedAt = playback.timestamp.map { timestamp in
                         Date(timeIntervalSince1970: TimeInterval(timestamp) / 1_000)
                     }
                     let track = SpotifyTrackPlayback(
                         id: identity,
-                        title: item.name,
+                        title: title,
                         artists: item.artists?.map(\.name) ?? [],
                         albumTitle: item.album?.name ?? "",
                         durationMilliseconds: duration,
@@ -271,10 +380,10 @@ public actor SpotifySession {
             )
         }
 
-        if playback.currentlyPlayingType == "ad" {
+        if let playbackType = playback.currentlyPlayingType, playbackType != "track" {
             return .unsupported(
                 SpotifyUnsupportedPlayback(
-                    type: "advertisement",
+                    type: playbackType,
                     title: nil
                 )
             )
@@ -283,21 +392,24 @@ public actor SpotifySession {
     }
 
     private func apiErrorMessage(data: Data) -> String? {
-        try? JSONDecoder().decode(APIErrorEnvelope.self, from: data).error.message
+        try? JSONDecoder().decode(
+            APIErrorEnvelope.self,
+            from: data
+        ).error.message
     }
 
     private static func formEncodedData(values: [String: String]) -> Data {
-        var components = URLComponents()
-        components.queryItems = values.sorted { firstValue, secondValue in
-            firstValue.key < secondValue.key
-        }.map { name, value in
-            URLQueryItem(name: name, value: value)
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        var fields: [String] = []
+        for name in values.keys.sorted() {
+            let encodedName = name.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+            let encodedValue = (values[name] ?? "").addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+            fields.append("\(encodedName)=\(encodedValue)")
         }
-        return Data((components.percentEncodedQuery ?? "").utf8)
+        return Data(fields.joined(separator: "&").utf8)
     }
 
     private static func scopes(scope: String) -> [String] {
         scope.split(separator: " ").map(String.init)
     }
 }
-

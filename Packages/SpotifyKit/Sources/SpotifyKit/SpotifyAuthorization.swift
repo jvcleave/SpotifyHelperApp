@@ -42,13 +42,24 @@ public struct SpotifyAuthorization: Sendable {
         )
     }
 
-    public func makeRequest(
+    func makeRequest(
         redirectURI: URL,
         codeVerifier: String,
         state: String
     ) throws -> SpotifyAuthorizationRequest {
-        if codeVerifier.count < 43 || codeVerifier.count > 128 {
+        if configuration.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw SpotifyError.invalidConfiguration("Add the Spotify Client ID before connecting.")
+        }
+        let verifierCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        if codeVerifier.count < 43 || codeVerifier.count > 128
+            || codeVerifier.rangeOfCharacter(from: verifierCharacters.inverted) != nil {
             throw SpotifyError.invalidConfiguration("The PKCE verifier must contain 43 through 128 characters.")
+        }
+        if redirectURI.scheme != "http" || redirectURI.host != "127.0.0.1"
+            || redirectURI.port == nil || redirectURI.path != configuration.redirectPath
+            || redirectURI.user != nil || redirectURI.password != nil
+            || redirectURI.query != nil || redirectURI.fragment != nil {
+            throw SpotifyError.invalidConfiguration("Use the registered loopback callback path and a bound port.")
         }
         if state.isEmpty {
             throw SpotifyError.invalidConfiguration("The authorization state must not be empty.")
@@ -59,13 +70,34 @@ public struct SpotifyAuthorization: Sendable {
         components.host = "accounts.spotify.com"
         components.path = "/authorize"
         components.queryItems = [
-            URLQueryItem(name: "client_id", value: configuration.clientID),
-            URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "redirect_uri", value: redirectURI.absoluteString),
-            URLQueryItem(name: "scope", value: configuration.scopes.joined(separator: " ")),
-            URLQueryItem(name: "code_challenge_method", value: "S256"),
-            URLQueryItem(name: "code_challenge", value: Self.codeChallenge(codeVerifier: codeVerifier)),
-            URLQueryItem(name: "state", value: state)
+            URLQueryItem(
+                name: "client_id",
+                value: configuration.clientID
+            ),
+            URLQueryItem(
+                name: "response_type",
+                value: "code"
+            ),
+            URLQueryItem(
+                name: "redirect_uri",
+                value: redirectURI.absoluteString
+            ),
+            URLQueryItem(
+                name: "scope",
+                value: configuration.scopes.joined(separator: " ")
+            ),
+            URLQueryItem(
+                name: "code_challenge_method",
+                value: "S256"
+            ),
+            URLQueryItem(
+                name: "code_challenge",
+                value: Self.codeChallenge(codeVerifier: codeVerifier)
+            ),
+            URLQueryItem(
+                name: "state",
+                value: state
+            )
         ]
 
         if let authorizationURL = components.url {
@@ -83,12 +115,23 @@ public struct SpotifyAuthorization: Sendable {
         callbackURL: URL,
         request: SpotifyAuthorizationRequest
     ) throws -> String {
-        if !Self.matchesRedirect(callbackURL: callbackURL, redirectURI: request.redirectURI) {
+        if !Self.matchesRedirect(
+            callbackURL: callbackURL,
+            redirectURI: request.redirectURI
+        ) || callbackURL.user != nil || callbackURL.password != nil || callbackURL.fragment != nil {
             throw SpotifyError.invalidAuthorizationCallback
         }
 
-        if let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) {
+        if let components = URLComponents(
+            url: callbackURL,
+            resolvingAgainstBaseURL: false
+        ) {
             let queryItems = components.queryItems ?? []
+            for parameterName in ["state", "code", "error"] {
+                if queryItems.filter({ $0.name == parameterName }).count > 1 {
+                    throw SpotifyError.invalidAuthorizationCallback
+                }
+            }
             let returnedState = queryItems.first { queryItem in
                 queryItem.name == "state"
             }?.value
@@ -118,29 +161,56 @@ public struct SpotifyAuthorization: Sendable {
         let verifierData = Data(codeVerifier.utf8)
         let digest = SHA256.hash(data: verifierData)
         return Data(digest).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+            .replacingOccurrences(
+                of: "+",
+                with: "-"
+            )
+            .replacingOccurrences(
+                of: "/",
+                with: "_"
+            )
+            .replacingOccurrences(
+                of: "=",
+                with: ""
+            )
     }
 
     private static func secureRandomString(byteCount: Int) throws -> String {
-        var bytes = [UInt8](repeating: 0, count: byteCount)
-        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        var bytes = [UInt8](
+            repeating: 0,
+            count: byteCount
+        )
+        let status = SecRandomCopyBytes(
+            kSecRandomDefault,
+            bytes.count,
+            &bytes
+        )
         if status != errSecSuccess {
             throw SpotifyError.randomGenerationFailed
         }
 
         return Data(bytes).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+            .replacingOccurrences(
+                of: "+",
+                with: "-"
+            )
+            .replacingOccurrences(
+                of: "/",
+                with: "_"
+            )
+            .replacingOccurrences(
+                of: "=",
+                with: ""
+            )
     }
 
-    private static func matchesRedirect(callbackURL: URL, redirectURI: URL) -> Bool {
+    private static func matchesRedirect(
+        callbackURL: URL,
+        redirectURI: URL
+    ) -> Bool {
         callbackURL.scheme == redirectURI.scheme
             && callbackURL.host == redirectURI.host
             && callbackURL.port == redirectURI.port
             && callbackURL.path == redirectURI.path
     }
 }
-

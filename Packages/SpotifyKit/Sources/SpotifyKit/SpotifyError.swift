@@ -23,7 +23,11 @@ public enum SpotifyError: Error, Equatable, LocalizedError, Sendable {
         case .invalidAuthorizationCallback:
             "Spotify returned an invalid authorization response."
         case .authorizationDenied(let reason):
-            reason ?? "Spotify authorization was denied."
+            if reason == "access_denied" {
+                "Spotify connection was cancelled."
+            } else {
+                reason ?? "Spotify authorization was denied."
+            }
         case .authorizationStateMismatch:
             "Spotify authorization could not be verified. Please try connecting again."
         case .notConnected:
@@ -32,7 +36,10 @@ public enum SpotifyError: Error, Equatable, LocalizedError, Sendable {
             message
         case .rateLimited(let retryAfter):
             if let retryAfter {
-                "Spotify is limiting requests. Try again in \(Int(retryAfter.rounded(.up))) seconds."
+                String(
+                    format: "Spotify is limiting requests. Try again in %.0f seconds.",
+                    retryAfter.rounded(.up)
+                )
             } else {
                 "Spotify is limiting requests. Please try again shortly."
             }
@@ -47,4 +54,3 @@ public enum SpotifyError: Error, Equatable, LocalizedError, Sendable {
         }
     }
 }
-

@@ -6,7 +6,7 @@ public struct SpotifyTrackPlayback: Equatable, Sendable {
     public let artists: [String]
     public let albumTitle: String
     public let durationMilliseconds: Int
-    public let progressMilliseconds: Int
+    public let progressMilliseconds: Int?
     public let isPlaying: Bool
     public let playbackStateChangedAt: Date?
     public let sampledAt: Date
@@ -18,7 +18,7 @@ public struct SpotifyTrackPlayback: Equatable, Sendable {
         artists: [String],
         albumTitle: String,
         durationMilliseconds: Int,
-        progressMilliseconds: Int,
+        progressMilliseconds: Int?,
         isPlaying: Bool,
         playbackStateChangedAt: Date?,
         sampledAt: Date,
@@ -72,7 +72,7 @@ struct SpotifyCurrentlyPlayingResponse: Decodable {
 
         let id: String?
         let uri: String?
-        let name: String
+        let name: String?
         let type: String?
         let artists: [Artist]?
         let album: Album?
@@ -105,4 +105,3 @@ struct SpotifyCurrentlyPlayingResponse: Decodable {
         case item
     }
 }
-

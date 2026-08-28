@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "SpotifyKit",
     platforms: [
-        .macOS(.v15)
+        .macOS("15.6")
     ],
     products: [
         .library(
@@ -22,4 +22,3 @@ let package = Package(
     ],
     swiftLanguageModes: [.v6]
 )
-
