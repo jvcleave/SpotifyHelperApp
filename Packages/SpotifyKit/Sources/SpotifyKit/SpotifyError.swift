@@ -7,6 +7,7 @@ public enum SpotifyError: Error, Equatable, LocalizedError, Sendable {
     case authorizationDenied(String?)
     case authorizationStateMismatch
     case authorizationInProgress
+    case callbackPortUnavailable(UInt16)
     case notConnected
     case forbidden(String)
     case rateLimited(retryAfter: TimeInterval?)
@@ -33,6 +34,8 @@ public enum SpotifyError: Error, Equatable, LocalizedError, Sendable {
             "Spotify authorization could not be verified. Please try connecting again."
         case .authorizationInProgress:
             "A Spotify connection request is already active."
+        case .callbackPortUnavailable(let port):
+            "Spotify sign-in needs local port \(port), but it is already in use. Close the other app or sign-in attempt using that port, then try again."
         case .notConnected:
             "Connect Spotify to continue."
         case .forbidden(let message):

@@ -36,9 +36,11 @@ public actor SpotifyAuthorizationCoordinator: SpotifyAuthorizing {
         self.session = session
         self.browser = browser
         let callbackPath = session.configuration.redirectPath
+        let callbackPort = session.configuration.redirectPort
         callbackFactory = {
             SpotifyLoopbackCallbackServer(
                 callbackPath: callbackPath,
+                callbackPort: callbackPort,
                 timeout: callbackTimeout
             )
         }

@@ -64,6 +64,10 @@ public struct SpotifyAuthorization: Sendable {
         if state.isEmpty {
             throw SpotifyError.invalidConfiguration("The authorization state must not be empty.")
         }
+        if let redirectPort = configuration.redirectPort,
+           redirectPort == 0 || redirectURI.port != Int(redirectPort) {
+            throw SpotifyError.invalidConfiguration("The callback port must match the registered Spotify redirect port.")
+        }
 
         var components = URLComponents()
         components.scheme = "https"

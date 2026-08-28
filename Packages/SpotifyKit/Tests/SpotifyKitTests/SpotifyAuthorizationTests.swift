@@ -2,8 +2,21 @@ import Foundation
 import Testing
 @testable import SpotifyKit
 
-@Test func generatedVerifierAndStateAreURLSafeAndUnique() throws {
+@Test func configuredPortMustMatchAuthorizationRedirect() throws {
     let authorization = SpotifyAuthorization(configuration: SpotifyConfiguration(clientID: "client"))
+    let registeredURI = try #require(URL(string: "http://127.0.0.1:8888/callback"))
+    #expect(try authorization.makeRequest(redirectURI: registeredURI).redirectURI == registeredURI)
+    let differentURI = try #require(URL(string: "http://127.0.0.1:8889/callback"))
+    #expect(throws: SpotifyError.invalidConfiguration("The callback port must match the registered Spotify redirect port.")) {
+        try authorization.makeRequest(redirectURI: differentURI)
+    }
+}
+
+@Test func generatedVerifierAndStateAreURLSafeAndUnique() throws {
+    let authorization = SpotifyAuthorization(configuration: SpotifyConfiguration(
+        clientID: "client",
+        redirectPort: 53123
+    ))
     let redirectURI = try #require(URL(string: "http://127.0.0.1:53123/callback"))
     let first = try authorization.makeRequest(redirectURI: redirectURI)
     let second = try authorization.makeRequest(redirectURI: redirectURI)
@@ -29,7 +42,10 @@ func invalidOrDeniedCallbackIsRejected(
     callback: String,
     expectedError: SpotifyError
 ) throws {
-    let authorization = SpotifyAuthorization(configuration: SpotifyConfiguration(clientID: "client"))
+    let authorization = SpotifyAuthorization(configuration: SpotifyConfiguration(
+        clientID: "client",
+        redirectPort: 53123
+    ))
     let redirectURI = try #require(URL(string: "http://127.0.0.1:53123/callback"))
     let request = SpotifyAuthorizationRequest(
         authorizationURL: redirectURI,
@@ -58,7 +74,10 @@ func invalidOrDeniedCallbackIsRejected(
 }
 
 @Test func authorizationRequestContainsMinimumScopeAndPKCEValues() throws {
-    let configuration = SpotifyConfiguration(clientID: "client-id")
+    let configuration = SpotifyConfiguration(
+        clientID: "client-id",
+        redirectPort: 53123
+    )
     let authorization = SpotifyAuthorization(configuration: configuration)
     let redirectURI = try #require(URL(string: "http://127.0.0.1:53123/callback"))
     let verifier = String(
@@ -94,7 +113,10 @@ func invalidOrDeniedCallbackIsRejected(
 }
 
 @Test func callbackRequiresMatchingState() throws {
-    let configuration = SpotifyConfiguration(clientID: "client-id")
+    let configuration = SpotifyConfiguration(
+        clientID: "client-id",
+        redirectPort: 53123
+    )
     let authorization = SpotifyAuthorization(configuration: configuration)
     let redirectURI = try #require(URL(string: "http://127.0.0.1:53123/callback"))
     let request = SpotifyAuthorizationRequest(
@@ -122,7 +144,10 @@ func invalidOrDeniedCallbackIsRejected(
 }
 
 @Test func callbackReturnsAuthorizationCode() throws {
-    let configuration = SpotifyConfiguration(clientID: "client-id")
+    let configuration = SpotifyConfiguration(
+        clientID: "client-id",
+        redirectPort: 53123
+    )
     let authorization = SpotifyAuthorization(configuration: configuration)
     let redirectURI = try #require(URL(string: "http://127.0.0.1:53123/callback"))
     let request = SpotifyAuthorizationRequest(

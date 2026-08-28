@@ -8,11 +8,11 @@ This follows the same view/view-model/service separation used by LyricsApp. Spot
 
 ## Progress — August 28, 2026
 
-The connection and manually refreshed now-playing milestone is implemented. Automated verification passes: 42 SpotifyKit tests, seven app view-model tests, and a signed macOS app build. The built app was also checked for Client ID configuration and sandbox network permissions.
+The connection and manually refreshed now-playing milestone is implemented. Automated verification passes: 45 SpotifyKit tests, seven app view-model tests, and a signed macOS app build. The built app was also checked for Client ID configuration and sandbox network permissions.
 
 Browser sign-in is now a reusable package feature. The app supplies its own Client ID once; users click Connect Spotify and approve access in the browser, with no developer credentials to obtain or paste. `SpotifyAuthorizationCoordinator` owns the attempt and cleanup; browser opening is injectable through `SpotifyBrowserOpening`. See `Packages/SpotifyKit/README.md` for integration examples.
 
-Live Spotify authorization, real Keychain persistence, and playback against an actual account have not been verified. The owner must complete the dashboard and Client ID setup in README, then run the live checks below. Checked implementation milestones do not imply those account-dependent checks are complete.
+The owner has created the Spotify developer app and registered `http://127.0.0.1:8888/callback`. Its Client ID is configured locally in the Git-ignored xcconfig file. Live Spotify authorization, real Keychain persistence, and playback against an actual account have not been verified. The owner must confirm account access and run the live checks below. Checked implementation milestones do not imply those account-dependent checks are complete.
 
 Lyrics lookup, automatic monitoring, and local playback-time estimation remain future work. The current UI labels position as a snapshot at the last refresh.
 
@@ -125,15 +125,15 @@ Use Authorization Code with PKCE. A native app cannot safely protect a client se
 
 1. Generate a cryptographically random PKCE verifier and OAuth state value.
 2. Derive the SHA-256 PKCE challenge.
-3. Start a temporary listener on an available `127.0.0.1` port.
+3. Start a temporary listener on the configured `127.0.0.1` port (default `8888`).
 4. Open Spotify's authorization page in the user's browser.
-5. Receive the callback at `http://127.0.0.1:<port>/callback`.
+5. Receive the callback at `http://127.0.0.1:8888/callback`.
 6. Verify the callback state before accepting the code.
 7. Exchange the code and verifier for access and refresh tokens.
 8. Store token material in Keychain.
 9. Stop the callback listener and clean up safely on success, failure, cancellation, or timeout.
 
-Register the loopback URI in the Spotify Developer Dashboard using the explicit IP address. Do not use `localhost`. The authorization request and token exchange must use the same redirect URI, including the dynamically chosen port.
+Register the loopback URI in the Spotify Developer Dashboard using the explicit IP address. Do not use `localhost`. The listener, authorization request, and token exchange must use the registered port. The dashboard rejected the documented portless form during setup, so this app uses fixed port `8888`. Port conflicts produce a recoverable error rather than silently selecting another port.
 
 Request only this initial scope:
 
@@ -149,10 +149,11 @@ References:
 
 ## Configuration and credentials
 
-- [ ] Create the app in the Spotify Developer Dashboard.
+- [x] Create the app in the Spotify Developer Dashboard.
 - [ ] Confirm the developer account meets Spotify's current Development Mode requirements.
 - [ ] Add the Spotify account used for testing to the app allowlist if required.
-- [ ] Register the loopback redirect URI.
+- [x] Register the loopback redirect URI with fixed port `8888`.
+- [x] Configure the app's Client ID in the local, Git-ignored xcconfig file.
 - [x] Accept the Client ID through a Git-ignored local xcconfig file or process environment.
 - [x] Add checked-in setup instructions.
 - [x] Fail at startup with a useful configuration message when the Client ID is absent.
@@ -338,6 +339,7 @@ Track identity, playback state, and lyrics state may change independently. The f
 - [x] `401`, `403`, `429`, malformed data, and network failure
 - [x] Cancellation, concurrent refresh ordering, and single-retry limits
 - [x] Package sign-in success, denial, malformed/state-mismatched callbacks, timeout, browser/token errors, cancellation, duplicate attempts, and fresh-state retry
+- [x] Fixed-port callback validation, occupied-port failure before browser opening, same-port retry, and zero-port rejection
 - [ ] Playback-position estimation for playing, paused, clamped, and re-anchored snapshots
 
 ### Lyrics integration tests
@@ -367,6 +369,7 @@ Track identity, playback state, and lyrics state may change independently. The f
 - One developer-configured application Client ID; end users only approve browser sign-in
 - Browser sign-in lives in SpotifyKit with an injectable browser opener
 - Explicit `127.0.0.1` loopback callback
+- Fixed callback port `8888` matching the dashboard registration; no automatic port fallback
 - Minimum initial scope: `user-read-currently-playing`
 - Spotify read-only behavior; no playback controls in the first version
 - SpotifyKit and LyricsKit remain independent reusable packages

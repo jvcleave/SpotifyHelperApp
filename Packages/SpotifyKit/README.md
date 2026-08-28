@@ -6,7 +6,9 @@ A reusable macOS 15.6+ Swift 6 package for browser sign-in and read-only Spotify
 
 The developer registers a Spotify app and supplies its public Client ID to `SpotifyConfiguration`. Bundle that ID in your application configuration; do not bundle a Client Secret. SpotifyKit uses [Authorization Code with PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow).
 
-Register `http://127.0.0.1/callback` in the Spotify Developer Dashboard. The package binds an available loopback port and uses the same redirect URI for authorization and token exchange. If you customize `redirectPath`, register the corresponding path instead. See Spotify's [redirect URI requirements](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri).
+Register `http://127.0.0.1:8888/callback` in the Spotify Developer Dashboard. The coordinator binds that fixed loopback port and uses the same redirect URI for authorization and token exchange. If you customize `redirectPath` or `redirectPort`, register the corresponding URI instead. See Spotify's [redirect URI requirements](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri).
+
+If the configured port is occupied, sign-in fails before opening the browser with `SpotifyError.callbackPortUnavailable`. Close the other listener and retry; there is no automatic fallback to an unregistered port. The dashboard rejected a portless URI during this project's setup, so the default is explicitly `8888`. Setting `redirectPort: nil` opts into dynamic ports for tests or registrations known to accept them; it is not the normal app setup. Port `0` is rejected.
 
 Sandboxed macOS apps need both outgoing network access and incoming network access for the temporary callback listener. No custom URL scheme or app delegate callback forwarding is required.
 

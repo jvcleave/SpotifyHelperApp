@@ -4,6 +4,7 @@ import Network
 /// One authorization attempt. The server owns its listener, connections, and timeout.
 public actor SpotifyLoopbackCallbackServer: SpotifyAuthorizationCallbackReceiving {
     private let callbackPath: String
+    private let callbackPort: UInt16?
     private let timeout: Duration
     private let queue = DispatchQueue(label: "com.jvclabs.SpotifyHelperApp.oauth-callback")
     private var listener: NWListener?
@@ -19,9 +20,11 @@ public actor SpotifyLoopbackCallbackServer: SpotifyAuthorizationCallbackReceivin
 
     public init(
         callbackPath: String = "/callback",
+        callbackPort: UInt16? = nil,
         timeout: Duration = .seconds(120)
     ) {
         self.callbackPath = callbackPath
+        self.callbackPort = callbackPort
         self.timeout = timeout
     }
 
@@ -36,15 +39,22 @@ public actor SpotifyLoopbackCallbackServer: SpotifyAuthorizationCallbackReceivin
             try await withCheckedThrowingContinuation { continuation in
                 startContinuation = continuation
                 do {
+                    let requestedPort: NWEndpoint.Port
+                    if let callbackPort {
+                        if callbackPort > 0, let configuredPort = NWEndpoint.Port(rawValue: callbackPort) {
+                            requestedPort = configuredPort
+                        } else {
+                            throw SpotifyError.invalidConfiguration("The Spotify callback port must be between 1 and 65535.")
+                        }
+                    } else {
+                        requestedPort = .any
+                    }
                     let parameters = NWParameters.tcp
                     parameters.requiredLocalEndpoint = .hostPort(
                         host: "127.0.0.1",
-                        port: .any
+                        port: requestedPort
                     )
-                    let listener = try NWListener(
-                        using: parameters,
-                        on: .any
-                    )
+                    let listener = try NWListener(using: parameters)
                     self.listener = listener
                     listener.stateUpdateHandler = { [weak self, weak listener] state in
                         let boundPort = listener?.port?.rawValue
@@ -140,11 +150,15 @@ public actor SpotifyLoopbackCallbackServer: SpotifyAuthorizationCallbackReceivin
                 }
             }
             finish(.failure(SpotifyError.invalidAuthorizationCallback))
-        case .failed:
-            finish(.failure(SpotifyError.network("The local Spotify callback listener could not start.")))
+        case .failed(let error), .waiting(let error):
+            if case .posix(.EADDRINUSE) = error, let callbackPort {
+                finish(.failure(SpotifyError.callbackPortUnavailable(callbackPort)))
+            } else {
+                finish(.failure(SpotifyError.network("The local Spotify callback listener could not start.")))
+            }
         case .cancelled:
             finish(.failure(CancellationError()))
-        case .setup, .waiting:
+        case .setup:
             break
         @unknown default:
             break

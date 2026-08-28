@@ -3,6 +3,14 @@ import Foundation
 import Testing
 @testable import SpotifyKit
 
+@Test func zeroPortDoesNotSilentlySelectDynamicPort() async {
+    let server = SpotifyLoopbackCallbackServer(callbackPort: 0)
+    await #expect(throws: SpotifyError.invalidConfiguration("The Spotify callback port must be between 1 and 65535.")) {
+        try await server.start()
+    }
+    #expect(await !server.isRunning)
+}
+
 @Test func loopbackServerReceivesCallbackAndReturnsBrowserMessage() async throws {
     let server = SpotifyLoopbackCallbackServer()
     let redirectURI = try await server.start()

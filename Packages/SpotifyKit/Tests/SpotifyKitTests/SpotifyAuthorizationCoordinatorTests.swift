@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import SpotifyKit
@@ -12,7 +13,8 @@ import Testing
         let session = SpotifySession(
             configuration: SpotifyConfiguration(
                 clientID: "shared-app-client",
-                redirectPath: "/spotify-sign-in"
+                redirectPath: "/spotify-sign-in",
+                redirectPort: nil
             ),
             transport: transport,
             tokenStore: store
@@ -155,8 +157,12 @@ import Testing
 
     @Test func retryCreatesFreshListenerAndPKCEState() async throws {
         let store = MemorySpotifyTokenStore()
+        let registeredPort = try unusedLoopbackPort()
         let session = SpotifySession(
-            configuration: SpotifyConfiguration(clientID: "client"),
+            configuration: SpotifyConfiguration(
+                clientID: "client",
+                redirectPort: registeredPort
+            ),
             transport: MockSpotifyHTTPTransport(responses: [successfulTokenResponse]),
             tokenStore: store
         )
@@ -175,16 +181,51 @@ import Testing
         #expect(urls.count == 2)
         let first = try authorizationQuery(authorizationURL: urls[0])
         let second = try authorizationQuery(authorizationURL: urls[1])
+        #expect(first["redirect_uri"] == "http://127.0.0.1:\(registeredPort)/callback")
+        #expect(second["redirect_uri"] == first["redirect_uri"])
         #expect(first["state"] != second["state"])
         #expect(first["code_challenge"] != second["code_challenge"])
         #expect(await store.savedToken() != nil)
+    }
+
+    @Test func occupiedRegisteredPortFailsBeforeBrowserOpens() async throws {
+        let occupiedListener = SpotifyLoopbackCallbackServer(timeout: .seconds(5))
+        let occupiedURL = try await occupiedListener.start()
+        let registeredPort = UInt16(try #require(occupiedURL.port))
+        let store = MemorySpotifyTokenStore()
+        let transport = MockSpotifyHTTPTransport(responses: [])
+        let session = SpotifySession(
+            configuration: SpotifyConfiguration(
+                clientID: "client",
+                redirectPort: registeredPort
+            ),
+            transport: transport,
+            tokenStore: store
+        )
+        let browser = TestAuthorizationBrowser(behavior: .idle)
+        let coordinator = SpotifyAuthorizationCoordinator(
+            session: session,
+            browser: browser,
+            callbackTimeout: .seconds(2)
+        )
+        await #expect(throws: SpotifyError.callbackPortUnavailable(registeredPort)) {
+            try await coordinator.connect()
+        }
+        #expect(await browser.openedURLs.isEmpty)
+        #expect(await transport.requests().isEmpty)
+        #expect(await store.savedToken() == nil)
+        #expect(await occupiedListener.isRunning)
+        await occupiedListener.stop()
     }
 
     @Test func cancellationDuringExchangeDoesNotSaveTokens() async throws {
         let store = MemorySpotifyTokenStore()
         let transport = WaitingTokenTransport()
         let session = SpotifySession(
-            configuration: SpotifyConfiguration(clientID: "client"),
+            configuration: SpotifyConfiguration(
+                clientID: "client",
+                redirectPort: nil
+            ),
             transport: transport,
             tokenStore: store
         )
@@ -227,7 +268,10 @@ private struct SignInTestSetup {
         transport = MockSpotifyHTTPTransport(responses: responses)
         browser = TestAuthorizationBrowser(behavior: behavior)
         let session = SpotifySession(
-            configuration: SpotifyConfiguration(clientID: "client"),
+            configuration: SpotifyConfiguration(
+                clientID: "client",
+                redirectPort: nil
+            ),
             transport: transport,
             tokenStore: store
         )
@@ -328,6 +372,41 @@ private func authorizationQuery(authorizationURL: URL) throws -> [String: String
         values[queryItem.name] = queryItem.value
     }
     return values
+}
+
+// Own and close the probe socket even when an assertion throws. Test listeners
+// use an available port rather than competing with the app's registered 8888.
+private func unusedLoopbackPort() throws -> UInt16 {
+    let descriptor = socket(
+        AF_INET,
+        SOCK_STREAM,
+        0
+    )
+    try #require(descriptor >= 0)
+    defer { close(descriptor) }
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_addr.s_addr = INADDR_LOOPBACK.bigEndian
+    var addressSize = socklen_t(MemoryLayout<sockaddr_in>.size)
+    try withUnsafeMutablePointer(to: &address) { addressPointer in
+        try addressPointer.withMemoryRebound(
+            to: sockaddr.self,
+            capacity: 1
+        ) { socketAddress in
+            try #require(bind(
+                descriptor,
+                socketAddress,
+                addressSize
+            ) == 0)
+            try #require(getsockname(
+                descriptor,
+                socketAddress,
+                &addressSize
+            ) == 0)
+        }
+    }
+    return UInt16(bigEndian: address.sin_port)
 }
 
 private actor WaitingTokenTransport: SpotifyHTTPTransport {
