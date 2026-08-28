@@ -18,7 +18,7 @@ Use this flow for feature work:
 ```text
 User action
   -> SwiftUI view
-  -> SpotifyLyricsViewModel action
+  -> SpotifyHelperViewModel action
   -> SpotifyKit service or value-type helper
   -> Sendable result
   -> view-model presentation state
@@ -61,7 +61,8 @@ User action
 - Configure the application's Client ID once at the composition root. End users sign in through Spotify's browser authorization page; do not make them obtain or paste developer credentials.
 - Keep default dependencies convenient for the app while preserving injectable boundaries for tests and previews.
 - The code that creates a listener, connection, task, or token owns its cleanup. Cleanup must be explicit and safe to repeat.
-- `SpotifyKit` and the future shared `LyricsKit` dependency remain independent; the app composes them.
+- `SpotifyHelperApp` demonstrates SpotifyKit without a lyrics dependency. A future separate SpotifyLyricsApp may compose SpotifyKit and LyricsKit; neither package should depend on the other.
+- Keep playback polling, retry pacing, and monotonic position estimation in SpotifyKit. The view model may run a local display timer, but it must not make a network request on each display tick.
 
 ## Swift style
 

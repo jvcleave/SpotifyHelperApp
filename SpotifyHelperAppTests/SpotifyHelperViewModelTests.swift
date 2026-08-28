@@ -3,12 +3,12 @@ import SpotifyKit
 import Testing
 
 @MainActor
-@Suite struct SpotifyLyricsViewModelTests {
+@Suite(.timeLimit(.minutes(1))) struct SpotifyHelperViewModelTests {
     private func makeViewModel(
         statusCode: Int,
         body: String,
         authorization: any SpotifyAuthorizing = StubAuthorization()
-    ) -> (SpotifyLyricsViewModel, TestTokenStore) {
+    ) -> (SpotifyHelperViewModel, TestTokenStore) {
         let store = TestTokenStore()
         let session = SpotifySession(
             configuration: SpotifyConfiguration(clientID: "test-client"),
@@ -19,9 +19,10 @@ import Testing
             tokenStore: store
         )
         return (
-            SpotifyLyricsViewModel(
+            SpotifyHelperViewModel(
                 session: session,
-                authorizationCoordinator: authorization
+                authorizationCoordinator: authorization,
+                monitor: SpotifyPlaybackMonitor(source: session)
             ),
             store
         )
@@ -60,10 +61,12 @@ import Testing
             #expect(display.artistText == "Artist")
             #expect(display.albumText == "Album")
             #expect(display.progressText == "1:03 / 3:21")
-            #expect(display.playbackStatusText == "Playing")
+            #expect(display.playbackStatusText == "Playing at last update")
         } else {
             Issue.record("Expected the track display")
         }
+        #expect(viewModel.monitoring.isMonitoring)
+        await stop(viewModel)
     }
 
     @Test func missingPositionIsVisible() async {
@@ -78,10 +81,11 @@ import Testing
         await viewModel.workTask?.value
         if case .track(let display) = viewModel.state {
             #expect(display.progressText == "Position unavailable / 2:00")
-            #expect(display.playbackStatusText == "Paused")
+            #expect(display.playbackStatusText == "Paused at last update")
         } else {
             Issue.record("Expected a paused track")
         }
+        await stop(viewModel)
     }
 
     @Test func denialReturnsToDisconnectedState() async {
@@ -107,6 +111,8 @@ import Testing
             connected: true
         ))
         #expect(viewModel.showsDisconnect)
+        #expect(!viewModel.monitoring.isMonitoring)
+        await stop(viewModel)
     }
 
     @Test func cancelAuthorizationWaitsForCleanupBeforeReconnect() async {
@@ -128,10 +134,140 @@ import Testing
     }
 
     @Test func unconfiguredPreviewDoesNotStartWork() {
-        let viewModel = SpotifyLyricsViewModel(configurationMessage: "Client ID is missing")
+        let viewModel = SpotifyHelperViewModel(configurationMessage: "Client ID is missing")
         viewModel.start()
         #expect(viewModel.workTask == nil)
         #expect(viewModel.state == .notConfigured("Client ID is missing"))
+    }
+
+    @Test func manualStopSurvivesInactiveWakeAndCanRestart() async {
+        let (viewModel, _) = makeViewModel(
+            statusCode: 204,
+            body: ""
+        )
+        viewModel.start()
+        await viewModel.workTask?.value
+        #expect(viewModel.monitoring.isMonitoring)
+        viewModel.toggleMonitoring()
+        await viewModel.monitoringTask?.value
+        #expect(!viewModel.monitoring.isMonitoring)
+        viewModel.applicationActivityChanged(isActive: false)
+        viewModel.applicationActivityChanged(isActive: true)
+        viewModel.systemSleepChanged(isAwake: false)
+        viewModel.systemSleepChanged(isAwake: true)
+        await viewModel.monitoringTask?.value
+        #expect(!viewModel.monitoring.isMonitoring)
+        viewModel.refreshPlayback()
+        await viewModel.workTask?.value
+        #expect(!viewModel.monitoring.isMonitoring)
+        viewModel.toggleMonitoring()
+        await viewModel.monitoringTask?.value
+        #expect(viewModel.monitoring.isMonitoring)
+        await stop(viewModel)
+    }
+
+    @Test func inactiveAndSleepSuspendAutomaticMonitoring() async {
+        let (viewModel, _) = makeViewModel(
+            statusCode: 204,
+            body: ""
+        )
+        viewModel.start()
+        await viewModel.workTask?.value
+        viewModel.applicationActivityChanged(isActive: false)
+        await viewModel.monitoringTask?.value
+        #expect(!viewModel.monitoring.isMonitoring)
+        viewModel.applicationActivityChanged(isActive: true)
+        await viewModel.monitoringTask?.value
+        #expect(viewModel.monitoring.isMonitoring)
+        viewModel.systemSleepChanged(isAwake: false)
+        await viewModel.monitoringTask?.value
+        #expect(!viewModel.monitoring.isMonitoring)
+        viewModel.systemSleepChanged(isAwake: true)
+        await viewModel.monitoringTask?.value
+        #expect(viewModel.monitoring.isMonitoring)
+        await stop(viewModel)
+        #expect(!viewModel.monitoring.isMonitoring)
+        viewModel.start()
+        await viewModel.workTask?.value
+        #expect(viewModel.monitoring.isMonitoring)
+        await stop(viewModel)
+    }
+
+    @Test func refreshFailureKeepsTrackAndDisconnectClearsIt() async {
+        let source = AppPlaybackSource()
+        let session = SpotifySession(
+            configuration: SpotifyConfiguration(clientID: "test-client"),
+            transport: TestTransport(
+                statusCode: 204,
+                body: ""
+            ),
+            tokenStore: TestTokenStore()
+        )
+        let monitor = SpotifyPlaybackMonitor(source: source)
+        let viewModel = SpotifyHelperViewModel(
+            session: session,
+            authorizationCoordinator: StubAuthorization(),
+            monitor: monitor
+        )
+        viewModel.start()
+        await viewModel.workTask?.value
+        viewModel.refreshPlayback()
+        await viewModel.workTask?.value
+        if case .track(let track) = viewModel.state {
+            #expect(track.title == "Retained Track")
+            #expect(track.positionNote.contains("frozen"))
+        } else {
+            Issue.record("A temporary failure must preserve the last known track")
+        }
+        #expect(viewModel.monitoring.warningText?.contains("Offline") == true)
+        #expect(!viewModel.monitoring.canRefresh)
+        viewModel.disconnectSpotify()
+        await viewModel.workTask?.value
+        #expect(viewModel.state == .disconnected)
+        #expect(await monitor.state.reading == nil)
+        #expect(!viewModel.monitoring.isMonitoring)
+        await stop(viewModel)
+    }
+
+    @Test func rapidLifecycleChangesCannotRestartAfterWindowCloses() async {
+        let (viewModel, _) = makeViewModel(
+            statusCode: 204,
+            body: ""
+        )
+        viewModel.start()
+        await viewModel.workTask?.value
+        for _ in 0..<10 {
+            viewModel.applicationActivityChanged(isActive: false)
+            viewModel.applicationActivityChanged(isActive: true)
+        }
+        await stop(viewModel)
+        #expect(!viewModel.monitoring.isMonitoring)
+    }
+
+    private func stop(_ viewModel: SpotifyHelperViewModel) async {
+        viewModel.stop()
+        await viewModel.workTask?.value
+        await viewModel.monitoringTask?.value
+    }
+}
+
+private actor AppPlaybackSource: SpotifyPlaybackProviding {
+    private var calls = 0
+    func currentlyPlaying() throws -> SpotifyPlaybackContent {
+        calls += 1
+        if calls > 1 { throw SpotifyError.network("Offline") }
+        return .track(SpotifyTrackPlayback(
+            id: "track",
+            title: "Retained Track",
+            artists: ["Artist"],
+            albumTitle: "Album",
+            durationMilliseconds: 120_000,
+            progressMilliseconds: 10_000,
+            isPlaying: true,
+            playbackStateChangedAt: nil,
+            sampledAt: Date(),
+            spotifyURL: nil
+        ))
     }
 }
 

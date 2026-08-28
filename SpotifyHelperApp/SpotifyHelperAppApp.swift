@@ -10,17 +10,19 @@ import SwiftUI
 
 @main
 struct SpotifyHelperAppApp: App {
-    @State private var viewModel: SpotifyLyricsViewModel
+    @State private var viewModel: SpotifyHelperViewModel
 
     init() {
-        let viewModel: SpotifyLyricsViewModel
+        let viewModel: SpotifyHelperViewModel
         do {
             let configuration = try SpotifyAppConfiguration.load()
             let session = SpotifySession(configuration: configuration)
             let authorizationCoordinator = SpotifyAuthorizationCoordinator(session: session)
-            viewModel = SpotifyLyricsViewModel(
+            let monitor = SpotifyPlaybackMonitor(source: session)
+            viewModel = SpotifyHelperViewModel(
                 session: session,
-                authorizationCoordinator: authorizationCoordinator
+                authorizationCoordinator: authorizationCoordinator,
+                monitor: monitor
             )
         } catch {
             let message: String
@@ -30,21 +32,21 @@ struct SpotifyHelperAppApp: App {
             } else {
                 message = "Spotify is not configured."
             }
-            viewModel = SpotifyLyricsViewModel(configurationMessage: message)
+            viewModel = SpotifyHelperViewModel(configurationMessage: message)
         }
         _viewModel = State(initialValue: viewModel)
     }
 
     var body: some Scene {
         Window(
-            "Spotify Lyrics",
-            id: "spotify-lyrics"
+            "Spotify Helper",
+            id: "spotify-helper"
         ) {
             ContentView(viewModel: viewModel)
         }
         .defaultSize(
             width: 680,
-            height: 520
+            height: 620
         )
     }
 }

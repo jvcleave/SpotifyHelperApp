@@ -1,6 +1,6 @@
 import Foundation
 
-public actor SpotifySession {
+public actor SpotifySession: SpotifyPlaybackProviding {
     private struct TokenResponse: Decodable {
         let accessToken: String
         let tokenType: String

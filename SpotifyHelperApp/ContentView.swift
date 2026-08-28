@@ -5,10 +5,12 @@
 //  Created by jason van cleave on 8/28/26.
 //
 
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
-    let viewModel: SpotifyLyricsViewModel
+    @Environment(\.scenePhase) private var scenePhase
+    let viewModel: SpotifyHelperViewModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,23 +64,20 @@ struct ContentView: View {
                     StatusView(
                         symbol: "pause.circle",
                         title: "Nothing Playing",
-                        message: "Start a song in Spotify, then refresh the playback state.",
-                        actionTitle: "Refresh",
-                        action: viewModel.refreshPlayback
+                        message: "Start a song in Spotify. Monitoring will pick up the next playback update.",
+                        actionTitle: nil,
+                        action: nil
                     )
                 case .unsupported(let title, let message):
                     StatusView(
                         symbol: "music.note.list",
                         title: title,
                         message: message,
-                        actionTitle: "Refresh",
-                        action: viewModel.refreshPlayback
+                        actionTitle: nil,
+                        action: nil
                     )
                 case .track(let track):
-                    NowPlayingView(
-                        track: track,
-                        refreshAction: viewModel.refreshPlayback
-                    )
+                    NowPlayingView(track: track)
                 case .failed(let message, let connected):
                     FailureView(
                         message: message,
@@ -92,10 +91,18 @@ struct ContentView: View {
                 maxWidth: .infinity,
                 maxHeight: .infinity
             )
+            if viewModel.showsDisconnect {
+                Divider()
+                MonitoringView(
+                    display: viewModel.monitoring,
+                    refreshAction: viewModel.refreshPlayback,
+                    toggleAction: viewModel.toggleMonitoring
+                )
+            }
         }
         .frame(
             minWidth: 560,
-            minHeight: 420
+            minHeight: 520
         )
         .background(Color(nsColor: .windowBackgroundColor))
         .task {
@@ -103,6 +110,18 @@ struct ContentView: View {
         }
         .onDisappear {
             viewModel.stop()
+        }
+        .onChange(
+            of: scenePhase,
+            initial: true
+        ) { _, phase in
+            viewModel.applicationActivityChanged(isActive: phase == .active)
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in
+            viewModel.systemSleepChanged(isAwake: false)
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
+            viewModel.systemSleepChanged(isAwake: true)
         }
         .toolbar {
             if viewModel.showsDisconnect {
@@ -118,16 +137,16 @@ struct ContentView: View {
 private struct AppHeaderView: View {
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "quote.bubble.fill")
+            Image(systemName: "waveform")
                 .font(.title2)
                 .foregroundStyle(.green)
             VStack(
                 alignment: .leading,
                 spacing: 2
             ) {
-                Text("Spotify Lyrics")
+                Text("Spotify Helper")
                     .font(.headline)
-                Text("Current track and playback position")
+                Text("SpotifyKit demo · current track and estimated position")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -245,7 +264,6 @@ private struct LoadingView: View {
 
 private struct NowPlayingView: View {
     let track: SpotifyTrackDisplay
-    let refreshAction: () -> Void
 
     var body: some View {
         VStack(
@@ -288,18 +306,12 @@ private struct NowPlayingView: View {
                 Text(track.progressText)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
-                Text("Position at last refresh")
+                Text(track.positionNote)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
 
             HStack(spacing: 12) {
-                Button(
-                    "Refresh",
-                    systemImage: "arrow.clockwise",
-                    action: refreshAction
-                )
-                    .buttonStyle(.borderedProminent)
                 if let spotifyURL = track.spotifyURL {
                     Link(destination: spotifyURL) {
                         Label(
@@ -317,9 +329,59 @@ private struct NowPlayingView: View {
     }
 }
 
+private struct MonitoringView: View {
+    let display: SpotifyMonitoringDisplay
+    let refreshAction: () -> Void
+    let toggleAction: () -> Void
+
+    var body: some View {
+        VStack(
+            alignment: .leading,
+            spacing: 10
+        ) {
+            HStack {
+                VStack(
+                    alignment: .leading,
+                    spacing: 4
+                ) {
+                    Text(display.statusText)
+                        .font(.subheadline)
+                    Text(display.lastUpdatedText)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if display.isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            if let warning = display.warningText {
+                Text(warning)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            HStack {
+                Button(
+                    display.toggleTitle,
+                    action: toggleAction
+                )
+                Button(
+                    "Refresh Now",
+                    systemImage: "arrow.clockwise",
+                    action: refreshAction
+                )
+                .disabled(!display.canRefresh)
+            }
+        }
+        .padding(20)
+        .background(.bar)
+    }
+}
+
 #Preview("Not Configured") {
     ContentView(
-        viewModel: SpotifyLyricsViewModel(
+        viewModel: SpotifyHelperViewModel(
             configurationMessage: "Add a Spotify Client ID to continue."
         )
     )

@@ -1,6 +1,6 @@
 # SpotifyKit
 
-A reusable macOS 15.6+ Swift 6 package for browser sign-in and read-only Spotify playback information. It contains no SwiftUI views. Users approve access in Spotify's browser page; they do not create developer apps, copy keys, or enter a Client Secret.
+A reusable macOS 15.6+ Swift 6 package for browser sign-in, read-only Spotify playback monitoring, and monotonic position estimation. It contains no SwiftUI views or lyrics dependency. Users approve access in Spotify's browser page; they do not create developer apps, copy keys, or enter a Client Secret.
 
 ## Configure the application once
 
@@ -65,9 +65,71 @@ try await session.disconnect()
 
 Keep reconnect disabled until cleanup finishes. Disconnect removes local tokens, not Spotify's account-level authorization grant, and does not control playback.
 
+## Monitor playback and estimate position
+
+Create one monitor per session at the composition root and retain it for the feature's lifetime:
+
+```swift
+let monitor = SpotifyPlaybackMonitor(
+    source: session,
+    pollInterval: .seconds(10)
+)
+```
+
+Subscribe from a view model, then start after authorization or successful restoration:
+
+```swift
+let updates = await monitor.updates()
+let observation = Task {
+    for await state in updates {
+        if Task.isCancelled { return }
+        // Project state.reading, isMonitoring, isRefreshing, error, and retryAt
+        // into main-actor presentation values. Preserve the reading on errors.
+    }
+}
+await monitor.start()
+```
+
+`start()` performs an initial refresh and starts one polling loop. Repeated starts do not duplicate work. `refresh()` coalesces concurrent requests and respects cooldowns even when automatic monitoring is stopped. Route manual refreshes through this monitor, not directly through the session.
+
+`SpotifyPlaybackMonitorState.reading` contains the normalized content, local receipt date, and an optional `SpotifyPlaybackTimeline` for track content. Each successful response replaces the reading, including empty or unsupported content. `revision` increases within a monitor so consumers combining explicit state reads and stream updates can reject older presentations. Streams buffer only the latest state.
+
+For smooth display, retain the latest reading and sample its timeline with a local display timer:
+
+```swift
+if let reading = await monitor.state.reading {
+    let estimate = reading.timeline?.estimate()
+    // estimate?.seconds is nil when Spotify did not report progress.
+    // estimate?.isStale indicates the sample is too old for further estimation.
+}
+```
+
+The timeline anchors progress to `ContinuousClock` at receipt, not Spotify's playback-state-change timestamp. It advances only a playing snapshot, clamps to track duration, and stops extrapolating after the greater of 30 seconds or twice the configured poll interval. A paused snapshot stays fixed. A new response re-anchors after seeks, pauses, and track changes. A standalone `SpotifyPlaybackTimeline(track:)` is also available for clients managing their own snapshots.
+
+This is an **estimate**, not continuous or sample-accurate playback telemetry. Pause/seek changes are detected at the next API response. Local drawing frequency must not determine network frequency. The default is 10 seconds; the package clamps custom intervals below one second. Tune conservatively for your quota, not for animation smoothness.
+
+Transient network/server failures freeze the timeline and back off. `429` respects `Retry-After` (or a default delay when missing), including manual refresh and stop/start. Permission or authorization failures stop automatic monitoring; `notConnected` also clears the previous reading. Surface errors rather than silently treating old metadata as current. See Spotify's [rate-limit guidance](https://developer.spotify.com/documentation/web-api/concepts/rate-limits).
+
+The feature owner controls lifecycle:
+
+```swift
+await monitor.stop() // Freeze, cancel request/poll, and await cleanup.
+await monitor.start() // Fresh request on resume, unless a cooldown applies.
+
+// On disconnect, before erasing session credentials:
+observation.cancel()
+await monitor.stop(clearPlayback: true)
+await signIn.cancel()
+try await session.disconnect()
+```
+
+Stopping is safe to repeat. Cancellation of the final stream subscription also stops owned work, but explicit cleanup is recommended. Canceling only a task awaiting `start()` or `refresh()` does not cancel a shared request; use `stop()`. Keep reconnect disabled until cleanup finishes. `stop()` does not send any Spotify playback command.
+
+The demo suspends monitoring on inactivity/sleep and keeps an explicit manual stop across reactivation. Other clients can choose their own feature lifecycle without importing the demo or LyricsKit.
+
 ## Injection and tests
 
-`SpotifyBrowserOpening` supplies an injectable browser opener, with `SystemSpotifyBrowser` as the macOS default. `SpotifyAuthorizing` allows view models to use test doubles. HTTP and token storage are independently injectable into `SpotifySession`.
+`SpotifyBrowserOpening` supplies an injectable browser opener, with `SystemSpotifyBrowser` as the macOS default. `SpotifyAuthorizing` allows view models to use test doubles. HTTP and token storage are independently injectable into `SpotifySession`. `SpotifyPlaybackProviding` lets a monitor consume fake playback snapshots; package tests additionally inject clocks and sleep behavior for deterministic timing and retry checks.
 
 Package tests simulate browser redirects against a real local loopback listener, with fake Spotify HTTP responses and in-memory token storage. They never launch a browser, contact Spotify, or access the real Keychain.
 
