@@ -1,5 +1,7 @@
 # SpotifyHelperApp
 
+<img width="942" height="812" alt="image" src="https://github.com/user-attachments/assets/3e8ad0ee-b845-4948-8eec-71f1579747b1" />
+
 SpotifyHelperApp is a standalone macOS SwiftUI reference app for **SpotifyKit**. It connects to Spotify and demonstrates current-track metadata, playback monitoring, and estimated live position. It has no lyrics dependency.
 
 The app includes browser sign-in with PKCE, Keychain session storage, automatic token refresh, current song details, Start/Stop Monitoring, Refresh Now, and disconnect. A future separate SpotifyLyricsApp can combine SpotifyKit with LyricsKit; neither package needs to depend on the other.
