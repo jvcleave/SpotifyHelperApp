@@ -5,9 +5,15 @@
 This repository contains two layers:
 
 - `SpotifyHelperApp/` is the macOS SwiftUI reference app.
-- `Packages/SpotifyKit/` is the reusable Swift package and the home of Spotify authorization, token persistence, Web API access, playback decoding, and playback models.
+- `Packages/SpotifyKit/` is a Git submodule of `jvcleave/SpotifyKit`, the reusable
+  Swift package for Spotify authorization, token persistence, Web API access,
+  playback decoding, and playback models. Read its own `AGENTS.md` before edits.
 
 Keep the dependency direction one-way: `SpotifyHelperApp` may import `SpotifyKit`; `SpotifyKit` must not depend on the app or SwiftUI.
+
+Initialize it with `git submodule update --init Packages/SpotifyKit`. Commit and
+push package changes in the package repository before recording its revision
+in this reference-app repository; preserve unrelated work in both repositories.
 
 The deployment and language baseline is Swift 6 with complete strict concurrency. The app and package target macOS 15.6.
 

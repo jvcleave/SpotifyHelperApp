@@ -1,0 +1,3 @@
+[submodule "Packages/SpotifyKit"]
+	path = Packages/SpotifyKit
+	url = https://github.com/jvcleave/SpotifyKit.git

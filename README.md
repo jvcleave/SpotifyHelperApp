@@ -8,6 +8,20 @@ The app includes browser sign-in with PKCE, Keychain session storage, automatic 
 
 Requires macOS 15.6 or later and Xcode with Swift 6 support.
 
+SpotifyKit is maintained in the standalone
+[SpotifyKit repository](https://github.com/jvcleave/SpotifyKit), included here
+as a submodule at `Packages/SpotifyKit`. Clone this app with
+`--recurse-submodules`, or initialize the package in an existing checkout before
+building:
+
+```bash
+git submodule update --init Packages/SpotifyKit
+```
+
+Other applications can consume
+`https://github.com/jvcleave/SpotifyKit.git` directly as a remote Swift package.
+The initial standalone version is `0.1.0`.
+
 ## Sign in as a user
 
 Open the configured app, click **Connect Spotify**, approve access in your browser, and return to the app. No developer account, API key, or Client Secret needs to be entered by the user. The application uses its own Client ID and stores each user's authorization locally in Keychain.
